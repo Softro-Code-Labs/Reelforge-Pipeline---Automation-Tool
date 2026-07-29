@@ -116,12 +116,100 @@
   .history-item:last-child { border-bottom: none; }
   .history-item .topic-name { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .history-item .time { color: var(--muted); font-size: 12px; }
+
+  .result { margin-top: 18px; display: none; }
+  .result.visible { display: block; }
+
+  video.preview {
+    width: 100%;
+    max-width: 320px;
+    display: block;
+    margin: 0 auto 18px;
+    border-radius: 10px;
+    background: #000;
+    border: 1px solid var(--border);
+  }
+
+  .download-btn {
+    display: block;
+    width: 100%;
+    text-align: center;
+    padding: 12px;
+    margin-bottom: 20px;
+    background: var(--success);
+    color: #04140a;
+    font-weight: 700;
+    text-decoration: none;
+    border-radius: 8px;
+  }
+  .download-btn:hover { filter: brightness(1.05); }
+
+  .field {
+    margin-bottom: 14px;
+  }
+  .field-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .copy-btn {
+    background: #23262f;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .copy-btn:hover { background: #2c303b; }
+  .copy-btn.copied { background: var(--success); color: #04140a; border-color: var(--success); }
+  .field-value {
+    background: #0c0d11;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag-pill {
+    background: #23262f;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 11px;
+    font-size: 13px;
+    color: var(--accent-hover);
+  }
+
+  .howto {
+    margin-top: 6px;
+    background: #14161c;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .howto h3 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+  .howto ol { margin: 0; padding-left: 18px; }
+  .howto li { font-size: 13.5px; line-height: 1.7; }
+  .howto b { color: var(--text); }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Reelforge</h1>
-  <p class="sub">Click below to run the full pipeline immediately — no need to wait for the scheduler.</p>
+  <p class="sub">Click below to generate a video with title, caption, and hashtags for manual upload.</p>
 
   <button id="generateBtn" class="generate-btn">Generate Now</button>
 
@@ -133,6 +221,46 @@
     </div>
     <div id="topic" class="topic"></div>
     <div id="log" class="log"></div>
+
+    <div id="result" class="result">
+      <video id="videoPreview" class="preview" controls></video>
+      <a id="downloadLink" class="download-btn" download>Download video (.mp4)</a>
+
+      <div class="field">
+        <div class="field-label">
+          <span>Title (paste into TikTok's caption box, top line)</span>
+          <button class="copy-btn" data-copy-target="titleValue">Copy</button>
+        </div>
+        <div id="titleValue" class="field-value"></div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">
+          <span>Caption</span>
+          <button class="copy-btn" data-copy-target="captionValue">Copy</button>
+        </div>
+        <div id="captionValue" class="field-value"></div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">
+          <span>Hashtags (tap to copy all)</span>
+          <button class="copy-btn" data-copy-target="hashtagsValue">Copy</button>
+        </div>
+        <div id="hashtagsValue" class="tag-list"></div>
+      </div>
+
+      <div class="howto">
+        <h3>How to upload manually</h3>
+        <ol>
+          <li>Tap <b>Download video</b> above and save the .mp4 to your phone/computer.</li>
+          <li>Open the TikTok app → tap <b>+</b> to create a post → <b>Upload</b> the downloaded video.</li>
+          <li>On the caption screen, paste the <b>Title</b> and <b>Caption</b> text above into the caption box.</li>
+          <li>Paste the <b>Hashtags</b> at the end of the caption (TikTok has no separate hashtag field — they just go inline in the caption text).</li>
+          <li>Review the auto-generated cover thumbnail, then tap <b>Post</b>.</li>
+        </ol>
+      </div>
+    </div>
   </div>
 
   <div class="history">
@@ -150,10 +278,17 @@
   const topicEl = document.getElementById('topic');
   const logEl = document.getElementById('log');
   const historyList = document.getElementById('historyList');
+  const resultEl = document.getElementById('result');
+  const videoPreview = document.getElementById('videoPreview');
+  const downloadLink = document.getElementById('downloadLink');
+  const titleValue = document.getElementById('titleValue');
+  const captionValue = document.getElementById('captionValue');
+  const hashtagsValue = document.getElementById('hashtagsValue');
 
   let pollHandle = null;
 
   function renderJob(job) {
+    lastJob = job;
     card.classList.add('visible');
     dot.className = 'dot' + (job.status === 'success' ? ' success' : job.status === 'failed' ? ' failed' : '');
     statusLabel.textContent = job.status;
@@ -170,7 +305,51 @@
       generateBtn.textContent = 'Generate Now';
       loadHistory();
     }
+
+    if (job.status === 'success' && job.videoPath) {
+      const videoUrl = `/media/${job.videoPath}`;
+      videoPreview.src = videoUrl;
+      downloadLink.href = videoUrl;
+      downloadLink.setAttribute('download', `${(job.title || job.topic || 'reelforge-video').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.mp4`);
+      titleValue.textContent = job.title || '';
+      captionValue.textContent = job.caption || '';
+      hashtagsValue.innerHTML = (job.hashtags || [])
+        .map((tag) => `<span class="tag-pill">#${escapeHtml(tag)}</span>`)
+        .join('');
+      resultEl.classList.add('visible');
+    } else {
+      resultEl.classList.remove('visible');
+    }
   }
+
+  function fullCaptionText(job) {
+    const hashtagLine = (job.hashtags || []).map((h) => `#${h}`).join(' ');
+    return [job.title, job.caption, hashtagLine].filter(Boolean).join('\n\n');
+  }
+
+  let lastJob = null;
+
+  document.body.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.copy-btn');
+    if (!btn || !lastJob) return;
+    const targetId = btn.getAttribute('data-copy-target');
+    let text = '';
+    if (targetId === 'titleValue') text = lastJob.title || '';
+    else if (targetId === 'captionValue') text = lastJob.caption || '';
+    else if (targetId === 'hashtagsValue') text = (lastJob.hashtags || []).map((h) => `#${h}`).join(' ');
+
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 1500);
+    } catch (err) {
+      // clipboard API unavailable (e.g. non-https) -- silently ignore
+    }
+  });
 
   function escapeHtml(str) {
     return String(str)

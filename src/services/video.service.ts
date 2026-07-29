@@ -1,4 +1,5 @@
 import { spawn } from "child_process";
+import * as fs from "fs";
 import * as path from "path";
 import { env } from "../config/env";
 import { buildSrt } from "./captions";
@@ -35,8 +36,47 @@ async function getAudioDurationSeconds(audioPath: string): Promise<number> {
   return seconds;
 }
 
+// Scales+crops+trims a single source clip to the target aspect ratio and
+// duration. Doing this one clip at a time (rather than in one big
+// filter_complex with every clip open at once) keeps peak memory bounded to
+// roughly a single decoder's worth of frames instead of N of them summed
+// together -- this is what was causing the Render OOM.
+async function preprocessClip(
+  clipPath: string,
+  duration: number,
+  width: number,
+  height: number,
+  outPath: string
+): Promise<void> {
+  await run(env.video.ffmpegPath, [
+    "-y",
+    "-i",
+    clipPath,
+    "-t",
+    duration.toFixed(2),
+    "-vf",
+    `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`,
+    "-an",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-pix_fmt",
+    "yuv420p",
+    outPath,
+  ]);
+}
+
 // Concatenates clips (cropped to portrait), overlays the voiceover, and
 // burns in captions. Outputs a single 9:16 MP4 sized for TikTok.
+//
+// Runs in three passes to keep memory and CPU bounded:
+//   1. Preprocess each clip individually (scale/crop/trim) -- one decoder
+//      open at a time instead of all of them at once.
+//   2. Concatenate the (now uniform, already-small) processed clips with
+//      the concat demuxer + "-c copy" -- a stream copy, no re-decoding.
+//   3. Single pass over the concatenated video to mux in audio and burn in
+//      subtitles.
 export async function assembleVideo(params: {
   clipPaths: string[];
   audioPath: string;
@@ -52,44 +92,56 @@ export async function assembleVideo(params: {
   const srtPath = buildSrt(narrationScript, audioDuration, workDir);
   const outputPath = path.join(workDir, "final.mp4");
 
-  // Build ffmpeg inputs: N video clips + 1 audio track.
-  const inputArgs: string[] = [];
-  clipPaths.forEach((clip) => {
-    inputArgs.push("-i", clip);
-  });
-  inputArgs.push("-i", audioPath);
+  // Pass 1: preprocess clips one at a time.
+  const processedDir = path.join(workDir, "processed");
+  fs.mkdirSync(processedDir, { recursive: true });
+  const processedPaths: string[] = [];
+  for (let i = 0; i < clipPaths.length; i++) {
+    const outPath = path.join(processedDir, `clip_${i}.mp4`);
+    await preprocessClip(clipPaths[i], perClipDuration, width, height, outPath);
+    processedPaths.push(outPath);
+  }
 
-  // Per-clip: scale+crop to target aspect ratio, trim to an even share of
-  // the audio length, reset timestamps so concat lines up cleanly.
-  const perClipFilters = clipPaths
-    .map(
-      (_, i) =>
-        `[${i}:v]scale=${width}:${height}:force_original_aspect_ratio=increase,` +
-        `crop=${width}:${height},trim=duration=${perClipDuration.toFixed(2)},setpts=PTS-STARTPTS[v${i}]`
-    )
-    .join(";");
+  // Pass 2: cheap concat via the concat demuxer (stream copy, no decode).
+  const listPath = path.join(processedDir, "list.txt");
+  const listContents = processedPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n");
+  fs.writeFileSync(listPath, listContents);
 
-  const concatInputs = clipPaths.map((_, i) => `[v${i}]`).join("");
-  const concatFilter = `${concatInputs}concat=n=${clipPaths.length}:v=1:a=0[vconcat]`;
+  const concatPath = path.join(workDir, "concat.mp4");
+  await run(env.video.ffmpegPath, [
+    "-y",
+    "-f",
+    "concat",
+    "-safe",
+    "0",
+    "-i",
+    listPath,
+    "-c",
+    "copy",
+    concatPath,
+  ]);
 
-  // Escape path for ffmpeg's subtitles filter (colons need escaping on most platforms).
+  // Pass 3: mux audio + burn in captions in a single decode pass.
+  // Note: DejaVu Sans (not Arial, which doesn't exist on Linux) -- see
+  // Dockerfile, which installs fonts-dejavu-core and prebuilds the
+  // fontconfig cache so this doesn't trigger slow font-matching at runtime.
   const escapedSrtPath = srtPath.replace(/:/g, "\\:");
   const captionFilter =
-    `[vconcat]subtitles='${escapedSrtPath}':force_style=` +
-    `'FontName=Arial,FontSize=16,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=2,Alignment=2,MarginV=120'[vout]`;
+    `subtitles='${escapedSrtPath}':force_style=` +
+    `'FontName=DejaVu Sans,FontSize=16,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=2,Alignment=2,MarginV=120'`;
 
-  const filterComplex = [perClipFilters, concatFilter, captionFilter].join(";");
-  const audioIndex = clipPaths.length; // last input is the voiceover track
-
-  const args = [
+  await run(env.video.ffmpegPath, [
     "-y",
-    ...inputArgs,
-    "-filter_complex",
-    filterComplex,
+    "-i",
+    concatPath,
+    "-i",
+    audioPath,
+    "-vf",
+    captionFilter,
     "-map",
-    "[vout]",
+    "0:v",
     "-map",
-    `${audioIndex}:a`,
+    "1:a",
     "-c:v",
     "libx264",
     "-preset",
@@ -98,8 +150,7 @@ export async function assembleVideo(params: {
     "aac",
     "-shortest",
     outputPath,
-  ];
+  ]);
 
-  await run(env.video.ffmpegPath, args);
   return outputPath;
 }
