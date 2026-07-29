@@ -4,12 +4,19 @@
 FROM node:20-bookworm-slim
 
 # ffmpeg: video assembly. python3/pip: installs Piper.
+# fonts-dejavu-core/fontconfig: the subtitles filter (libass) needs a real,
+# installed font -- without one it falls back to slow, repeated font
+# matching for every caption. fc-cache prebuilds the cache at build time so
+# it isn't rebuilt (slowly) on every container start.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     python3 \
     python3-pip \
     curl \
     ca-certificates \
+    fonts-dejavu-core \
+    fontconfig \
+    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
 # --break-system-packages: Debian's Python is externally-managed (PEP 668);
