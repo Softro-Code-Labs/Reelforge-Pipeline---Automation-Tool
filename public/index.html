@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reelforge — Generate Now</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --border: #2a2e38;
+    --text: #e7e9ee;
+    --muted: #8b90a0;
+    --accent: #ff2e63;
+    --accent-hover: #ff477e;
+    --success: #2ecc71;
+    --fail: #ff5c5c;
+    --running: #ffb020;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    padding: 40px 16px;
+  }
+  .wrap { width: 100%; max-width: 640px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 28px; }
+
+  .generate-btn {
+    width: 100%;
+    padding: 16px;
+    font-size: 16px;
+    font-weight: 600;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.1s ease;
+  }
+  .generate-btn:hover:not(:disabled) { background: var(--accent-hover); }
+  .generate-btn:active:not(:disabled) { transform: scale(0.99); }
+  .generate-btn:disabled {
+    background: #3a3d47;
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+
+  .card {
+    margin-top: 24px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    display: none;
+  }
+  .card.visible { display: block; }
+
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--running);
+    flex-shrink: 0;
+  }
+  .dot.success { background: var(--success); }
+  .dot.failed { background: var(--fail); }
+  .status-label { font-weight: 600; text-transform: capitalize; }
+  .job-id { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+  .topic { color: var(--text); font-size: 14px; margin-bottom: 10px; }
+  .topic b { color: var(--muted); font-weight: 500; }
+
+  .log {
+    background: #0c0d11;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    max-height: 260px;
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: #c7cad4;
+  }
+  .log div { white-space: pre-wrap; word-break: break-word; }
+  .log .err { color: var(--fail); }
+
+  .history {
+    margin-top: 28px;
+  }
+  .history h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+  .history-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .history-item:last-child { border-bottom: none; }
+  .history-item .topic-name { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-item .time { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Reelforge</h1>
+  <p class="sub">Click below to run the full pipeline immediately — no need to wait for the scheduler.</p>
+
+  <button id="generateBtn" class="generate-btn">Generate Now</button>
+
+  <div id="card" class="card">
+    <div class="status-row">
+      <div id="dot" class="dot"></div>
+      <span id="statusLabel" class="status-label">pending</span>
+      <span id="jobIdLabel" class="job-id"></span>
+    </div>
+    <div id="topic" class="topic"></div>
+    <div id="log" class="log"></div>
+  </div>
+
+  <div class="history">
+    <h2>Recent runs</h2>
+    <div id="historyList"></div>
+  </div>
+</div>
+
+<script>
+  const generateBtn = document.getElementById('generateBtn');
+  const card = document.getElementById('card');
+  const dot = document.getElementById('dot');
+  const statusLabel = document.getElementById('statusLabel');
+  const jobIdLabel = document.getElementById('jobIdLabel');
+  const topicEl = document.getElementById('topic');
+  const logEl = document.getElementById('log');
+  const historyList = document.getElementById('historyList');
+
+  let pollHandle = null;
+
+  function renderJob(job) {
+    card.classList.add('visible');
+    dot.className = 'dot' + (job.status === 'success' ? ' success' : job.status === 'failed' ? ' failed' : '');
+    statusLabel.textContent = job.status;
+    jobIdLabel.textContent = job.id.slice(0, 8);
+    topicEl.innerHTML = job.topic ? `<b>Topic:</b> ${escapeHtml(job.topic)}` : '';
+    logEl.innerHTML = (job.log || [])
+      .map((line) => `<div class="${line.includes('ERROR') ? 'err' : ''}">${escapeHtml(line)}</div>`)
+      .join('');
+    logEl.scrollTop = logEl.scrollHeight;
+
+    if (job.status === 'success' || job.status === 'failed') {
+      stopPolling();
+      generateBtn.disabled = false;
+      generateBtn.textContent = 'Generate Now';
+      loadHistory();
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function stopPolling() {
+    if (pollHandle) {
+      clearInterval(pollHandle);
+      pollHandle = null;
+    }
+  }
+
+  async function pollJob(jobId) {
+    stopPolling();
+    pollHandle = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/jobs/${jobId}`);
+        if (!res.ok) return;
+        const job = await res.json();
+        renderJob(job);
+      } catch (e) {
+        // transient fetch error, ignore and retry on next tick
+      }
+    }, 2000);
+  }
+
+  generateBtn.addEventListener('click', async () => {
+    generateBtn.disabled = true;
+    generateBtn.textContent = 'Generating…';
+    card.classList.add('visible');
+    dot.className = 'dot';
+    statusLabel.textContent = 'starting';
+    topicEl.textContent = '';
+    logEl.innerHTML = '';
+
+    try {
+      const res = await fetch('/api/generate', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start');
+      jobIdLabel.textContent = data.jobId.slice(0, 8);
+      pollJob(data.jobId);
+    } catch (e) {
+      statusLabel.textContent = 'failed to start';
+      dot.className = 'dot failed';
+      logEl.innerHTML = `<div class="err">${escapeHtml(e.message)}</div>`;
+      generateBtn.disabled = false;
+      generateBtn.textContent = 'Generate Now';
+    }
+  });
+
+  async function loadHistory() {
+    try {
+      const res = await fetch('/api/jobs');
+      const jobs = await res.json();
+      historyList.innerHTML = jobs
+        .slice(0, 10)
+        .map((j) => `
+          <div class="history-item">
+            <div class="dot${j.status === 'success' ? ' success' : j.status === 'failed' ? ' failed' : ''}"></div>
+            <div class="topic-name">${escapeHtml(j.topic || j.id.slice(0, 8))}</div>
+            <div class="time">${new Date(j.createdAt).toLocaleString()}</div>
+          </div>
+        `)
+        .join('') || '<p style="color:#8b90a0; font-size:13px;">No runs yet.</p>';
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  loadHistory();
+</script>
+</body>
+</html>
