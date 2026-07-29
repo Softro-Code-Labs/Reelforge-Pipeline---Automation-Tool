@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 400" width="1400" height="400">
+  <defs>
+    <linearGradient id="spark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FCDE5A"/>
+      <stop offset="45%" stop-color="#F2A623"/>
+      <stop offset="100%" stop-color="#D6451F"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="400" fill="#17181B"/>
+
+  <!-- icon badge -->
+  <rect x="80" y="80" width="240" height="240" rx="54" fill="#1F2024"/>
+  <polygon points="176,155 176,245 258,200"
+           fill="url(#spark)"
+           stroke="url(#spark)"
+           stroke-width="15"
+           stroke-linejoin="round"
+           stroke-linecap="round"
+           transform="translate(0,0)"/>
+  <g fill="url(#spark)">
+    <rect x="270" y="122" width="11" height="11" rx="2" transform="rotate(45 275 127)"/>
+    <rect x="284" y="146" width="8" height="8" rx="1.5" transform="rotate(45 288 150)"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="380" y="245" font-family="Bricolage Grotesque" font-weight="700"
+        font-size="140" fill="#F4F3EF" letter-spacing="-2">Reelforge</text>
+</svg>

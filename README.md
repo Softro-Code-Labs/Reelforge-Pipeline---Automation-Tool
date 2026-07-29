@@ -1,7 +1,9 @@
-# TikTok AI Video Pipeline (zero API cost)
+# AI Video Pipeline (zero API cost) — generate for manual upload
 
 Scheduled pipeline: **Gemini (free tier) → Pexels free stock footage → Piper (free local TTS)
-→ ffmpeg assembly → TikTok Content Posting API**.
+→ ffmpeg assembly**. The app generates the video plus a ready-to-use title, caption, and
+hashtags, and shows them in a UI where you preview, download, and post manually — there is
+no automated TikTok publishing step.
 
 Nothing in this chain has a per-run dollar cost. The tradeoff, stated plainly: this produces a
 fast-paced stock-footage explainer with a synthetic voice, not a Veo-style AI-generated video
@@ -21,24 +23,24 @@ fast-paced stock-footage explainer with a synthetic voice, not a Veo-style AI-ge
   within rate limits (your content may be used to improve Google's products on the free tier).
 - **Pexels**: free key at https://www.pexels.com/api/ — generous rate limits, no cost.
 
-## 3. TikTok setup (the one part that isn't instant)
+## 3. Posting to TikTok (manual)
 
-1. Register an app at https://developers.tiktok.com, add the **Content Posting API** product.
-2. Complete the one-time OAuth authorization flow for the TikTok account you want to post to
-   (TikTok's login screen → your app receives an access token + refresh token). This project
-   assumes you already have these two tokens in `.env` — a minimal OAuth callback route can be
-   added if you need help wiring that up.
-3. **Until your app passes TikTok's audit, every post publishes as `SELF_ONLY`** (visible only
-   to the account owner) — this is enforced by TikTok itself, not something this code can bypass.
-   Leave `TIKTOK_UNAUDITED=true` until you've passed review, then flip it to `false`.
-4. The audit itself is free — it just takes TikTok 2-4 weeks of manual review and requires a
-   real privacy policy URL and a clear description of your use case.
+This project deliberately does not publish to TikTok automatically. There's no TikTok developer
+app, no OAuth, and no audit wait to deal with. Instead, each run gives you a finished video plus
+title/caption/hashtag text in the UI (`npm run ui`), which you download and post yourself from
+the TikTok app:
+
+1. Run a generation (see step 5) and open the UI.
+2. Preview the video, then tap **Download video (.mp4)**.
+3. In the TikTok app: tap **+** → **Upload** → select the downloaded video.
+4. Copy the **Title**, **Caption**, and **Hashtags** shown in the UI into TikTok's caption box
+   (there's a Copy button next to each), then tap **Post**.
 
 ## 4. Configure
 
 ```
 cp .env.example .env
-# fill in GEMINI_API_KEY, PEXELS_API_KEY, PIPER_*, TIKTOK_* values
+# fill in GEMINI_API_KEY, PEXELS_API_KEY, PIPER_* values
 ```
 
 ## 5. Run
@@ -46,16 +48,16 @@ cp .env.example .env
 ```bash
 npm install
 
-# Test a single pipeline run end-to-end without waiting for the scheduler:
-npm run run:once
+# Open the UI: click "Generate Now" and it runs the full pipeline on demand
+npm run ui
 
-# Start the always-on scheduler (fires at each time in POST_TIMES):
-npm run build && npm start
+# Or test a single pipeline run end-to-end from the command line, no UI:
+npm run run:once
 ```
 
-Check `./data/jobs.json` after any run for status, logs, and the resulting TikTok `publish_id`.
-Generated clips, audio, and the final video for each run are kept under `./workdir/<job-id>/`
-for inspection/debugging (safe to delete once you're happy with output quality).
+Check `./data/jobs.json` after any run for status and logs. Generated clips, audio, and the
+final video for each run are kept under `./workdir/<job-id>/` — the UI serves the final video
+from there for preview/download; the folder is safe to delete once you've uploaded manually.
 
 ## Customizing content
 
@@ -69,9 +71,7 @@ Edit `NICHES` in `src/pipeline/runPipeline.ts` to control what topics get genera
   tiers, not free).
 - **Captions are timed by even word-count spreading**, not real speech alignment — good enough
   for burned-in captions, not perfectly synced to Piper's actual cadence.
-- **TikTok refresh tokens rotate on every use** — this is now handled automatically: each run
-  persists the newly-rotated token (to Render's env vars if `RENDER_API_KEY`/`RENDER_SERVICE_ID`
-  are set, or by rewriting the local `.env` otherwise) so the next run doesn't retry an
-  invalidated token. See `DEPLOY_RENDER.md` if deploying elsewhere.
 - **No retry/backoff** on transient API failures — add if you see occasional Gemini/Pexels
   rate-limit errors during busier hours.
+- **Generated videos are ephemeral** — download each one from the UI soon after it's created;
+  see the note in `DEPLOY_RENDER.md` if hosting this remotely.

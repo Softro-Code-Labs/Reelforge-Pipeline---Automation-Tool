@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="1024" height="1024">
+  <defs>
+    <linearGradient id="spark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FCDE5A"/>
+      <stop offset="45%" stop-color="#F2A623"/>
+      <stop offset="100%" stop-color="#D6451F"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#17181B"/>
+
+  <!-- play / forge mark: rounded triangle via round stroke join -->
+  <polygon points="196,146 196,366 372,256"
+           fill="url(#spark)"
+           stroke="url(#spark)"
+           stroke-width="30"
+           stroke-linejoin="round"
+           stroke-linecap="round"/>
+
+  <!-- sparks flying off the strike point -->
+  <g fill="url(#spark)">
+    <rect x="384" y="150" width="20" height="20" rx="4" transform="rotate(45 394 160)"/>
+    <rect x="410" y="196" width="14" height="14" rx="3" transform="rotate(45 417 203)"/>
+    <rect x="392" y="238" width="10" height="10" rx="2" transform="rotate(45 397 243)" opacity="0.85"/>
+  </g>
+</svg>
