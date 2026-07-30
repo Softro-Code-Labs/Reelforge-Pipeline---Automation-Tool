@@ -83,6 +83,13 @@ async function preprocessClip(
   await run(env.video.ffmpegPath, args);
 }
 
+// Bundled directly under assets/fonts (Google Fonts' Poppins, OFL-licensed)
+// rather than relying on a system font -- this way caption rendering looks
+// identical regardless of what fonts happen to be installed on the host/
+// container, with no fontconfig setup required.
+const FONTS_DIR = path.join(__dirname, "..", "..", "assets", "fonts");
+const CAPTION_FONT = "Poppins ExtraBold";
+
 /**
  * Builds the ffmpeg filter_complex graph for the final mux pass: burns in
  * subtitles on the video, and -- when `musicPath` is provided -- mixes the
@@ -95,13 +102,28 @@ async function preprocessClip(
  * lines -- closer to how real short-form edits mix music under narration.
  */
 function buildFilterComplex(srtPath: string, hasMusic: boolean): { filter: string; audioMap: string } {
-  // DejaVu Sans (not Arial, which doesn't exist on Linux) -- see Dockerfile,
-  // which installs fonts-dejavu-core and prebuilds the fontconfig cache so
-  // this doesn't trigger slow font-matching at runtime.
   const escapedSrtPath = srtPath.replace(/:/g, "\\:");
-  const subtitleFilter =
-    `subtitles='${escapedSrtPath}':force_style=` +
-    `'FontName=DejaVu Sans,FontSize=16,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=2,Alignment=2,MarginV=120'`;
+  const escapedFontsDir = FONTS_DIR.replace(/:/g, "\\:");
+
+  // Big, bold, high-contrast caption style modeled on typical short-form
+  // video captions: large enough to read at a glance, thick black outline
+  // so it stays legible over any footage, and enough bottom margin to clear
+  // TikTok's own UI (like/comment/share icons) once posted.
+  const style = [
+    `FontName=${CAPTION_FONT}`,
+    "FontSize=68",
+    "PrimaryColour=&H00FFFFFF&", // opaque white fill
+    "OutlineColour=&H00000000&", // opaque black outline
+    "BorderStyle=1",
+    "Outline=7",
+    "Shadow=3",
+    "Alignment=2", // bottom-center
+    "MarginV=160",
+    "MarginL=50",
+    "MarginR=50",
+  ].join(",");
+
+  const subtitleFilter = `subtitles='${escapedSrtPath}':fontsdir='${escapedFontsDir}':force_style='${style}'`;
 
   const videoStage = `[0:v]${subtitleFilter}[vout]`;
 
@@ -212,6 +234,15 @@ export async function assembleVideo(params: {
     "-c:a",
     "aac",
     "-shortest",
+    // Moves the moov atom (metadata/index) to the front of the file instead
+    // of the end. Without this, a browser/player streaming the file
+    // progressively (exactly how the in-app preview and TikTok's own upload
+    // do it) has to wait on data at the very end before it can seek or
+    // continue decoding -- it plays the first buffered chunk fine, then
+    // stalls/lags once that runs out. This was the cause of the "lag after
+    // a few seconds" symptom.
+    "-movflags",
+    "+faststart",
     outputPath,
   ]);
 

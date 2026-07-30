@@ -19,9 +19,18 @@ AI-generated video (Veo has no free API tier at all).
 
 - **Node.js** 18+
 - **ffmpeg** (and ffprobe, bundled with it) — `apt install ffmpeg` / `brew install ffmpeg`
-- **Piper TTS** — download a prebuilt binary from https://github.com/rhasspy/piper/releases
-  and a voice model (`.onnx` + `.onnx.json`) from https://github.com/rhasspy/piper/blob/master/VOICES.md
-  (e.g. `en_US-amy-medium`). No account or API key needed, runs fully offline.
+- **Text-to-speech** — two engines, no API key for either:
+  - **edge-tts** (primary/default) — `pip install edge-tts`. Uses Microsoft Edge's neural
+    voices (the same ones behind Edge's "Read Aloud"), which sound far more natural than
+    Piper. **Important caveat:** this is an unofficial wrapper around a consumer service, not
+    a supported API — Microsoft could rate-limit or change it without notice. That's why Piper
+    (below) is always kept configured as an automatic fallback.
+  - **Piper TTS** (fallback) — download a prebuilt binary from
+    https://github.com/rhasspy/piper/releases and a voice model (`.onnx` + `.onnx.json`) from
+    https://github.com/rhasspy/piper/blob/master/VOICES.md (recommended: `en_US-libritts_r-medium`
+    — trained on audiobook narration, paces spoken scripts more naturally than a conversational
+    voice). Fully offline, no external dependency at all — this is what keeps videos generating
+    if edge-tts ever has an outage.
 
 ## 2. Get free API keys
 
@@ -105,6 +114,29 @@ full script, title, hashtags, an inline HTML5 video player, a **Download** butto
 **Delete** button (removes both the video file and its database record). Videos are never
 auto-downloaded — a download only happens when you explicitly click the button.
 
+## 9. Voiceover: edge-tts (primary) with automatic Piper fallback
+
+`TTS_PROVIDER` controls which engine generates narration:
+
+```
+TTS_PROVIDER=edge   # default -- natural neural voice, unofficial API (see caveat below)
+TTS_PROVIDER=piper  # fully offline, more synthetic, zero external dependency
+```
+
+With `TTS_PROVIDER=edge`, set `EDGE_TTS_VOICE` to pick a different voice (default
+`en-US-AndrewNeural`). Run `edge-tts --list-voices` to see the full catalog across languages
+and genders.
+
+**Why there's a fallback:** edge-tts is not an official Microsoft API — it's a wrapper around
+the consumer-facing voice service behind Edge's "Read Aloud" feature, maintained by reverse-
+engineering the endpoint it calls. That endpoint has changed before and could again, or get
+rate-limited, without warning. So every edge-tts failure is automatically caught and retried
+with Piper instead (see `src/services/tts.service.ts`) — a run degrades to a more synthetic
+voice rather than failing outright. Check the job log for a line like
+`[tts] edge-tts failed, falling back to Piper: ...` to know when that's happened; if you see it
+often, either Piper alone or a paid TTS API (ElevenLabs, Google Cloud TTS, Azure TTS — all have
+free/cheap tiers) may be worth switching to.
+
 ## Customizing content
 
 Edit `NICHES` in `src/pipeline/runPipeline.ts` to control what topics get generated, or replace
@@ -112,9 +144,9 @@ Edit `NICHES` in `src/pipeline/runPipeline.ts` to control what topics get genera
 
 ## Known limitations / things to harden before relying on this in production
 
-- **Piper voice quality** is decent but noticeably synthetic compared to paid TTS — swap in
-  ElevenLabs or Google Cloud TTS later if quality becomes the bottleneck (both have small paid
-  tiers, not free).
+- **edge-tts is unofficial** — see section 9. It's the best-sounding free option available, but
+  it's not a supported API, so treat the Piper fallback as load-bearing, not decorative: make
+  sure Piper is actually installed and working, don't assume edge-tts will always be up.
 - **Captions are timed by even word-count spreading**, not real speech alignment — good enough
   for burned-in captions, not perfectly synced to Piper's actual cadence.
 - **Background music selection is mood-based text search**, not audio analysis — Freesound

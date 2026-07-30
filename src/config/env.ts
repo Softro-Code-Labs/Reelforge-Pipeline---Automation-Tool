@@ -53,6 +53,17 @@ export const env = {
     voiceModelPath: required('PIPER_VOICE_MODEL_PATH'),
   },
 
+  // Voiceover generation. Default is edge-tts -- Microsoft Edge's neural
+  // voices via an unofficial, free, no-API-key wrapper -- which sounds far
+  // more natural than Piper. It's NOT an official/supported API, though: it
+  // can be rate-limited or broken by an upstream change without notice, so
+  // every edge-tts failure automatically falls back to Piper (always kept
+  // configured, see above) rather than failing the whole video job.
+  tts: {
+    provider: optional('TTS_PROVIDER', 'edge') as 'edge' | 'piper',
+    edgeVoice: optional('EDGE_TTS_VOICE', 'en-US-AndrewNeural'),
+  },
+
   video: {
     ffmpegPath: optional('FFMPEG_PATH', 'ffmpeg'),
     width: parseInt(optional('VIDEO_WIDTH', '1080'), 10),

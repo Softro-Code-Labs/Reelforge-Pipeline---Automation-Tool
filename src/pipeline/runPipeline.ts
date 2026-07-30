@@ -63,7 +63,7 @@ async function executeJob(jobId: string, workDir: string): Promise<void> {
     );
     appendLog(jobId, `Fetched ${clipPaths.length} clip(s)`);
 
-    appendLog(jobId, "Synthesizing voiceover with Piper...");
+    appendLog(jobId, `Synthesizing voiceover (${env.tts.provider})...`);
     const audioPath = await synthesizeVoiceover(plan.narration_script, path.join(workDir, "audio"));
 
     appendLog(jobId, `Sourcing background music (mood: ${plan.music_mood})...`);
