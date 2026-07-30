@@ -21,7 +21,10 @@ function formatSrtTime(totalSeconds: number): string {
  */
 export function buildSrt(script: string, audioDurationSeconds: number, destDir: string): string {
   const words = script.trim().split(/\s+/);
-  const wordsPerChunk = 6;
+  // Short bursts (not the previous 6) so captions stay to one, at most two,
+  // lines at the larger caption font size -- long lines at that size would
+  // either overflow the frame width or wrap awkwardly mid-thought.
+  const wordsPerChunk = 4;
   const chunks: string[] = [];
   for (let i = 0; i < words.length; i += wordsPerChunk) {
     chunks.push(words.slice(i, i + wordsPerChunk).join(" "));
