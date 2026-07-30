@@ -4,6 +4,7 @@ import * as path from "path";
 import { env } from "../config/env";
 import { buildSrt } from "./captions";
 
+/** Runs a CLI command and resolves with stdout, or rejects with stderr on non-zero exit. */
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, args);
@@ -19,7 +20,8 @@ function run(cmd: string, args: string[]): Promise<string> {
   });
 }
 
-async function getAudioDurationSeconds(audioPath: string): Promise<number> {
+/** Reads the duration (seconds) of any audio or video file via ffprobe. */
+async function getMediaDurationSeconds(mediaPath: string): Promise<number> {
   const out = await run("ffprobe", [
     "-v",
     "error",
@@ -27,20 +29,29 @@ async function getAudioDurationSeconds(audioPath: string): Promise<number> {
     "format=duration",
     "-of",
     "default=noprint_wrappers=1:nokey=1",
-    audioPath,
+    mediaPath,
   ]);
   const seconds = parseFloat(out.trim());
   if (!seconds || Number.isNaN(seconds)) {
-    throw new Error(`Could not read duration of ${audioPath}`);
+    throw new Error(`Could not read duration of ${mediaPath}`);
   }
   return seconds;
 }
 
-// Scales+crops+trims a single source clip to the target aspect ratio and
-// duration. Doing this one clip at a time (rather than in one big
-// filter_complex with every clip open at once) keeps peak memory bounded to
-// roughly a single decoder's worth of frames instead of N of them summed
-// together -- this is what was causing the Render OOM.
+/**
+ * Scales+crops a single source clip to the target aspect ratio and trims (or,
+ * if the source is shorter than its slot, loops) it to exactly `duration`
+ * seconds. Doing this one clip at a time (rather than in one big
+ * filter_complex with every clip open at once) keeps peak memory bounded to
+ * roughly a single decoder's worth of frames instead of N of them summed
+ * together -- this is what was causing the Render OOM.
+ *
+ * Looping short clips (instead of the previous behavior of just trimming,
+ * which silently produced a shorter-than-requested segment) keeps every
+ * clip's slot exactly `duration` long, so the final concatenated video
+ * always matches the voiceover's length instead of ending early or
+ * freezing on the last frame while audio keeps playing.
+ */
 async function preprocessClip(
   clipPath: string,
   duration: number,
@@ -48,8 +59,12 @@ async function preprocessClip(
   height: number,
   outPath: string
 ): Promise<void> {
-  await run(env.video.ffmpegPath, [
+  const sourceDuration = await getMediaDurationSeconds(clipPath);
+  const needsLoop = sourceDuration < duration;
+
+  const args = [
     "-y",
+    ...(needsLoop ? ["-stream_loop", "-1"] : []),
     "-i",
     clipPath,
     "-t",
@@ -64,29 +79,73 @@ async function preprocessClip(
     "-pix_fmt",
     "yuv420p",
     outPath,
-  ]);
+  ];
+  await run(env.video.ffmpegPath, args);
 }
 
-// Concatenates clips (cropped to portrait), overlays the voiceover, and
-// burns in captions. Outputs a single 9:16 MP4 sized for TikTok.
-//
-// Runs in three passes to keep memory and CPU bounded:
-//   1. Preprocess each clip individually (scale/crop/trim) -- one decoder
-//      open at a time instead of all of them at once.
-//   2. Concatenate the (now uniform, already-small) processed clips with
-//      the concat demuxer + "-c copy" -- a stream copy, no re-decoding.
-//   3. Single pass over the concatenated video to mux in audio and burn in
-//      subtitles.
+/**
+ * Builds the ffmpeg filter_complex graph for the final mux pass: burns in
+ * subtitles on the video, and -- when `musicPath` is provided -- mixes the
+ * voiceover with a ducked background-music bed so the music audibly drops
+ * whenever narration is present instead of competing with it.
+ *
+ * Sidechain compression (rather than a single fixed low volume throughout)
+ * is what gives a genuine "ducking" effect: the music is attenuated further,
+ * dynamically, in response to the voiceover's level, then recovers between
+ * lines -- closer to how real short-form edits mix music under narration.
+ */
+function buildFilterComplex(srtPath: string, hasMusic: boolean): { filter: string; audioMap: string } {
+  // DejaVu Sans (not Arial, which doesn't exist on Linux) -- see Dockerfile,
+  // which installs fonts-dejavu-core and prebuilds the fontconfig cache so
+  // this doesn't trigger slow font-matching at runtime.
+  const escapedSrtPath = srtPath.replace(/:/g, "\\:");
+  const subtitleFilter =
+    `subtitles='${escapedSrtPath}':force_style=` +
+    `'FontName=DejaVu Sans,FontSize=16,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=2,Alignment=2,MarginV=120'`;
+
+  const videoStage = `[0:v]${subtitleFilter}[vout]`;
+
+  if (!hasMusic) {
+    return { filter: videoStage, audioMap: "1:a" };
+  }
+
+  const musicVolume = env.music.volume;
+  const audioStage =
+    `[2:a]volume=${musicVolume}[music_vol];` +
+    // Duck the music bed against the voiceover: attenuate further whenever
+    // narration is present, recover in the gaps between lines.
+    `[music_vol][1:a]sidechaincompress=threshold=0.05:ratio=8:attack=5:release=400:makeup=1[music_ducked];` +
+    // Blend the (unmodified) voice with the ducked music into one track.
+    `[1:a][music_ducked]amix=inputs=2:duration=first:dropout_transition=1[aout]`;
+
+  return { filter: `${videoStage};${audioStage}`, audioMap: "[aout]" };
+}
+
+/**
+ * Concatenates clips (cropped to portrait), overlays the voiceover (mixed
+ * with optional ducked background music), and burns in captions. Outputs a
+ * single 9:16 MP4 sized for TikTok.
+ *
+ * Runs in three passes to keep memory and CPU bounded:
+ *   1. Preprocess each clip individually (scale/crop/trim-or-loop) -- one
+ *      decoder open at a time instead of all of them at once.
+ *   2. Concatenate the (now uniform, already-small) processed clips with
+ *      the concat demuxer + "-c copy" -- a stream copy, no re-decoding.
+ *   3. Single pass over the concatenated video to mux in audio (voice, plus
+ *      ducked music if available) and burn in subtitles.
+ */
 export async function assembleVideo(params: {
   clipPaths: string[];
   audioPath: string;
   narrationScript: string;
   workDir: string;
+  /** Path to a background-music file, or omitted/undefined if none was fetched. */
+  musicPath?: string | null;
 }): Promise<string> {
-  const { clipPaths, audioPath, narrationScript, workDir } = params;
+  const { clipPaths, audioPath, narrationScript, workDir, musicPath } = params;
   const { width, height } = env.video;
 
-  const audioDuration = await getAudioDurationSeconds(audioPath);
+  const audioDuration = await getMediaDurationSeconds(audioPath);
   const perClipDuration = audioDuration / clipPaths.length;
 
   const srtPath = buildSrt(narrationScript, audioDuration, workDir);
@@ -121,27 +180,31 @@ export async function assembleVideo(params: {
     concatPath,
   ]);
 
-  // Pass 3: mux audio + burn in captions in a single decode pass.
-  // Note: DejaVu Sans (not Arial, which doesn't exist on Linux) -- see
-  // Dockerfile, which installs fonts-dejavu-core and prebuilds the
-  // fontconfig cache so this doesn't trigger slow font-matching at runtime.
-  const escapedSrtPath = srtPath.replace(/:/g, "\\:");
-  const captionFilter =
-    `subtitles='${escapedSrtPath}':force_style=` +
-    `'FontName=DejaVu Sans,FontSize=16,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=2,Alignment=2,MarginV=120'`;
+  // Pass 3: mux audio (voice, optionally ducked under background music) and
+  // burn in captions in a single decode pass.
+  const hasMusic = !!musicPath;
+  const { filter, audioMap } = buildFilterComplex(srtPath, hasMusic);
 
-  await run(env.video.ffmpegPath, [
-    "-y",
+  const inputArgs = [
     "-i",
     concatPath,
     "-i",
     audioPath,
-    "-vf",
-    captionFilter,
+    // Loop the music bed indefinitely; amix's duration=first (matched to the
+    // voiceover, input 1) trims it back down to the video's actual length,
+    // so a short track still covers the whole clip without a hard cutoff.
+    ...(hasMusic ? ["-stream_loop", "-1", "-i", musicPath as string] : []),
+  ];
+
+  await run(env.video.ffmpegPath, [
+    "-y",
+    ...inputArgs,
+    "-filter_complex",
+    filter,
     "-map",
-    "0:v",
+    "[vout]",
     "-map",
-    "1:a",
+    audioMap,
     "-c:v",
     "libx264",
     "-preset",

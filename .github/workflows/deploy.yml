@@ -1,0 +1,53 @@
+name: Deploy to Oracle Cloud
+
+# Runs on every push to main, or manually via the "Run workflow" button in
+# the Actions tab (workflow_dispatch) -- useful for redeploying without a new
+# commit, e.g. after changing something directly on the VM.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancels an in-progress deploy if a newer one is triggered, so two pushes
+# close together can't race each other on the VM.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  # Fails fast on a GitHub-hosted runner (a TypeScript error, say) instead of
+  # discovering it mid-deploy on the VM.
+  build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+  deploy:
+    needs: build-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH in, pull latest code, and redeploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          # Fails the whole step (and the workflow) if any line errors,
+          # instead of silently continuing past a failed git pull/build.
+          script_stop: true
+          # Generous ceiling: a cold `docker compose build` (no layer cache
+          # yet) can take a few minutes on a 1 OCPU Ampere instance.
+          command_timeout: 15m
+          script: |
+            cd ~/reelforge
+            git pull origin main
+            docker compose up -d --build
+            docker image prune -f

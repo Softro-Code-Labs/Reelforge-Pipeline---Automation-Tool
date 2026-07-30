@@ -3,9 +3,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { env } from "../config/env";
 
-// Runs the script through Piper (local, free, offline TTS) and writes a WAV
-// to destDir. Install Piper and point PIPER_VOICE_MODEL_PATH at a voice
-// .onnx + .onnx.json pair -- see README.
+/**
+ * Runs the script through Piper (local, free, offline TTS) and writes a WAV
+ * to destDir. Install Piper and point PIPER_VOICE_MODEL_PATH at a voice
+ * .onnx + .onnx.json pair -- see README.
+ *
+ * @returns Absolute path to the generated `voiceover.wav`.
+ */
 export async function synthesizeVoiceover(script: string, destDir: string): Promise<string> {
   fs.mkdirSync(destDir, { recursive: true });
   const outputPath = path.join(destDir, "voiceover.wav");

@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
+/** Formats seconds as an SRT timestamp: "HH:MM:SS,mmm". */
 function formatSrtTime(totalSeconds: number): string {
   const ms = Math.floor((totalSeconds % 1) * 1000);
   const totalSecInt = Math.floor(totalSeconds);
@@ -11,8 +12,13 @@ function formatSrtTime(totalSeconds: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms, 3)}`;
 }
 
-// Splits the script into short caption chunks and spreads them evenly across
-// the audio duration -- an estimate, not word-level alignment.
+/**
+ * Splits the script into short caption chunks and spreads them evenly across
+ * the audio duration -- an estimate, not real word-level alignment -- then
+ * writes the result as an .srt file for ffmpeg's subtitles filter to burn in.
+ *
+ * @returns Absolute path to the written .srt file.
+ */
 export function buildSrt(script: string, audioDurationSeconds: number, destDir: string): string {
   const words = script.trim().split(/\s+/);
   const wordsPerChunk = 6;

@@ -29,7 +29,19 @@
   }
   .wrap { width: 100%; max-width: 640px; }
   h1 { font-size: 22px; margin: 0 0 4px; }
-  .sub { color: var(--muted); font-size: 14px; margin: 0 0 28px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+
+  .banner {
+    background: #14161c;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-bottom: 20px;
+    line-height: 1.6;
+  }
+  .banner b { color: var(--text); font-weight: 600; }
 
   .generate-btn {
     width: 100%;
@@ -105,17 +117,81 @@
     color: var(--muted);
     margin: 0 0 10px;
   }
+  .history-item-wrap {
+    border-bottom: 1px solid var(--border);
+  }
+  .history-item-wrap:last-child { border-bottom: none; }
   .history-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border);
+    padding: 10px 2px;
     font-size: 13px;
+    cursor: pointer;
   }
-  .history-item:last-child { border-bottom: none; }
+  .history-item:hover .topic-name { color: var(--accent-hover); }
   .history-item .topic-name { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .history-item .time { color: var(--muted); font-size: 12px; }
+  .history-item .time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .history-item .chevron { color: var(--muted); font-size: 10px; width: 12px; text-align: center; }
+
+  .trigger-badge {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .trigger-badge.scheduled { color: var(--running); border-color: #4a3f26; }
+  .trigger-badge.manual { color: #7fb7ff; border-color: #2a3d55; }
+
+  .history-detail {
+    padding: 4px 2px 18px 22px;
+  }
+  .history-detail video {
+    width: 100%;
+    max-width: 280px;
+    display: block;
+    margin: 0 0 12px;
+    border-radius: 10px;
+    background: #000;
+    border: 1px solid var(--border);
+  }
+  .history-detail .meta-line {
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .history-detail .meta-line b { color: var(--text); font-weight: 500; }
+  .history-detail .script {
+    background: #0c0d11;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    color: #c7cad4;
+    margin: 8px 0 12px;
+    white-space: pre-wrap;
+  }
+  .detail-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .btn-small {
+    flex: 1;
+    text-align: center;
+    padding: 9px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: #1c1f27;
+    color: var(--text);
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn-small.download { background: var(--success); color: #04140a; border-color: var(--success); }
+  .btn-small.delete { background: transparent; color: var(--fail); border-color: #4a2323; }
+  .btn-small.delete:hover { background: #2a1414; }
 
   .result { margin-top: 18px; display: none; }
   .result.visible { display: block; }
@@ -211,6 +287,8 @@
   <h1>Reelforge</h1>
   <p class="sub">Click below to generate a video with title, caption, and hashtags for manual upload.</p>
 
+  <div id="scheduleBanner" class="banner"></div>
+
   <button id="generateBtn" class="generate-btn">Generate Now</button>
 
   <div id="card" class="card">
@@ -264,7 +342,7 @@
   </div>
 
   <div class="history">
-    <h2>Recent runs</h2>
+    <h2>Video history</h2>
     <div id="historyList"></div>
   </div>
 </div>
@@ -278,6 +356,7 @@
   const topicEl = document.getElementById('topic');
   const logEl = document.getElementById('log');
   const historyList = document.getElementById('historyList');
+  const scheduleBanner = document.getElementById('scheduleBanner');
   const resultEl = document.getElementById('result');
   const videoPreview = document.getElementById('videoPreview');
   const downloadLink = document.getElementById('downloadLink');
@@ -286,6 +365,16 @@
   const hashtagsValue = document.getElementById('hashtagsValue');
 
   let pollHandle = null;
+  let expandedJobId = null;
+  let lastHistoryJobs = [];
+  let lastJob = null;
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
 
   function renderJob(job) {
     lastJob = job;
@@ -322,13 +411,6 @@
     }
   }
 
-  function fullCaptionText(job) {
-    const hashtagLine = (job.hashtags || []).map((h) => `#${h}`).join(' ');
-    return [job.title, job.caption, hashtagLine].filter(Boolean).join('\n\n');
-  }
-
-  let lastJob = null;
-
   document.body.addEventListener('click', async (e) => {
     const btn = e.target.closest('.copy-btn');
     if (!btn || !lastJob) return;
@@ -350,13 +432,6 @@
       // clipboard API unavailable (e.g. non-https) -- silently ignore
     }
   });
-
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-  }
 
   function stopPolling() {
     if (pollHandle) {
@@ -403,26 +478,139 @@
     }
   });
 
+  // --- Schedule / storage-limit banner ---
+
+  async function loadConfig() {
+    try {
+      const res = await fetch('/api/config');
+      const cfg = await res.json();
+      const times = (cfg.schedule && cfg.schedule.times) || [];
+      const scheduleText = times.length
+        ? `Automated generation runs daily at <b>${times.join(', ')}</b> (${escapeHtml(cfg.schedule.timezone)})`
+        : 'No automated schedule configured — set <b>SCHEDULE_TIMES</b> to enable it';
+      scheduleBanner.innerHTML = `${scheduleText}. Manual generation always works too.<br>` +
+        `Storage keeps the most recent <b>${cfg.maxStoredVideos}</b> videos; older ones are auto-deleted.`;
+    } catch (e) {
+      scheduleBanner.textContent = '';
+    }
+  }
+
+  // --- History / video management ---
+
+  function statusDotClass(status) {
+    return status === 'success' ? ' success' : status === 'failed' ? ' failed' : '';
+  }
+
+  function renderHistoryDetail(job) {
+    if (job.status === 'success' && job.videoPath) {
+      const videoUrl = `/media/${job.videoPath}`;
+      const downloadName = `${(job.title || job.topic || 'reelforge-video').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.mp4`;
+      const hashtags = (job.hashtags || []).map((h) => `#${escapeHtml(h)}`).join(' ');
+      return `
+        <div class="history-detail">
+          <video controls preload="none" src="${videoUrl}"></video>
+          <div class="meta-line"><b>Prompt/topic:</b> ${escapeHtml(job.topic || '—')}</div>
+          <div class="meta-line"><b>Generated:</b> ${escapeHtml(job.createdAtDisplay)}</div>
+          <div class="meta-line"><b>Trigger:</b> ${escapeHtml(job.trigger)}</div>
+          ${job.title ? `<div class="meta-line"><b>Title:</b> ${escapeHtml(job.title)}</div>` : ''}
+          ${hashtags ? `<div class="meta-line"><b>Hashtags:</b> ${hashtags}</div>` : ''}
+          ${job.narrationScript ? `<div class="script">${escapeHtml(job.narrationScript)}</div>` : ''}
+          <div class="detail-actions">
+            <a class="btn-small download" href="${videoUrl}" download="${downloadName}">Download</a>
+            <button class="btn-small delete" data-delete-id="${job.id}">Delete</button>
+          </div>
+        </div>
+      `;
+    }
+
+    if (job.status === 'failed') {
+      return `
+        <div class="history-detail">
+          <div class="meta-line"><b>Prompt/topic:</b> ${escapeHtml(job.topic || '—')}</div>
+          <div class="meta-line"><b>Generated:</b> ${escapeHtml(job.createdAtDisplay)}</div>
+          <div class="meta-line"><b>Trigger:</b> ${escapeHtml(job.trigger)}</div>
+          <div class="script err">${escapeHtml(job.error || 'Unknown error')}</div>
+          <div class="detail-actions">
+            <button class="btn-small delete" data-delete-id="${job.id}">Delete</button>
+          </div>
+        </div>
+      `;
+    }
+
+    // pending / running
+    return `
+      <div class="history-detail">
+        <div class="meta-line"><b>Status:</b> ${escapeHtml(job.status)} — in progress…</div>
+        <div class="meta-line"><b>Started:</b> ${escapeHtml(job.createdAtDisplay)}</div>
+      </div>
+    `;
+  }
+
+  function renderHistoryList(jobs) {
+    lastHistoryJobs = jobs;
+    if (!jobs.length) {
+      historyList.innerHTML = '<p style="color:#8b90a0; font-size:13px;">No runs yet.</p>';
+      return;
+    }
+    historyList.innerHTML = jobs
+      .map((j) => {
+        const expanded = j.id === expandedJobId;
+        return `
+          <div class="history-item-wrap">
+            <div class="history-item" data-job-id="${j.id}">
+              <div class="dot${statusDotClass(j.status)}"></div>
+              <div class="topic-name">${escapeHtml(j.topic || j.id.slice(0, 8))}</div>
+              <span class="trigger-badge ${j.trigger || 'manual'}">${escapeHtml(j.trigger || 'manual')}</span>
+              <div class="time">${escapeHtml(j.createdAtDisplay || '')}</div>
+              <span class="chevron">${expanded ? '▲' : '▼'}</span>
+            </div>
+            ${expanded ? renderHistoryDetail(j) : ''}
+          </div>
+        `;
+      })
+      .join('');
+  }
+
+  historyList.addEventListener('click', async (e) => {
+    const deleteBtn = e.target.closest('[data-delete-id]');
+    if (deleteBtn) {
+      const jobId = deleteBtn.getAttribute('data-delete-id');
+      if (!confirm('Delete this video and its files? This cannot be undone.')) return;
+      deleteBtn.disabled = true;
+      deleteBtn.textContent = 'Deleting…';
+      try {
+        await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+        if (expandedJobId === jobId) expandedJobId = null;
+        await loadHistory();
+      } catch (err) {
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = 'Delete';
+      }
+      return;
+    }
+
+    const row = e.target.closest('.history-item');
+    if (!row) return;
+    const jobId = row.getAttribute('data-job-id');
+    expandedJobId = expandedJobId === jobId ? null : jobId;
+    renderHistoryList(lastHistoryJobs);
+  });
+
   async function loadHistory() {
     try {
       const res = await fetch('/api/jobs');
       const jobs = await res.json();
-      historyList.innerHTML = jobs
-        .slice(0, 10)
-        .map((j) => `
-          <div class="history-item">
-            <div class="dot${j.status === 'success' ? ' success' : j.status === 'failed' ? ' failed' : ''}"></div>
-            <div class="topic-name">${escapeHtml(j.topic || j.id.slice(0, 8))}</div>
-            <div class="time">${new Date(j.createdAt).toLocaleString()}</div>
-          </div>
-        `)
-        .join('') || '<p style="color:#8b90a0; font-size:13px;">No runs yet.</p>';
+      renderHistoryList(jobs);
     } catch (e) {
-      // ignore
+      // ignore transient errors, next refresh tick will retry
     }
   }
 
+  loadConfig();
   loadHistory();
+  // Keeps the dashboard current for videos produced by the background
+  // scheduler, not just ones triggered from this browser tab.
+  setInterval(loadHistory, 5000);
 </script>
 </body>
 </html>

@@ -54,5 +54,10 @@ build/config\.gypi
 pnpm-lock.yaml
 /.history
 
+# folders
+/keys
+/data
+/workdir
+
 # environment
 .env
