@@ -1,3 +1,8 @@
+/**
+ * CLI entrypoint for `npm run run:once` -- runs a single pipeline job to
+ * completion outside the web server, useful for testing the pipeline
+ * end-to-end without the UI.
+ */
 import { runPipelineOnce } from "./runPipeline";
 
 runPipelineOnce()

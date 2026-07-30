@@ -1,13 +1,19 @@
-# AI Video Pipeline (zero API cost) — generate for manual upload
+# AI Video Pipeline (near-zero API cost) — generate for manual upload
 
-Scheduled pipeline: **Gemini (free tier) → Pexels free stock footage → Piper (free local TTS)
-→ ffmpeg assembly**. The app generates the video plus a ready-to-use title, caption, and
-hashtags, and shows them in a UI where you preview, download, and post manually — there is
-no automated TikTok publishing step.
+Pipeline: **Gemini (free tier) → Pexels free stock footage → Piper (free local TTS) → Freesound
+(free CC0 background music) → ffmpeg assembly (with ducked music + burned-in captions)**. The
+app generates the video plus a ready-to-use title, caption, and hashtags, and shows them in a
+UI where you preview, download, and post manually — there is no automated TikTok publishing
+step.
 
-Nothing in this chain has a per-run dollar cost. The tradeoff, stated plainly: this produces a
-fast-paced stock-footage explainer with a synthetic voice, not a Veo-style AI-generated video
-(Veo has no free API tier at all).
+Generation can be triggered **manually** from the UI at any time, or run **automatically on a
+daily schedule** (Sri Lanka time). Every video is kept in a searchable history with inline
+playback, metadata, and one-click delete, and storage is capped automatically so old videos
+don't pile up forever.
+
+Nothing in this chain has a required per-run dollar cost. The tradeoff, stated plainly: this
+produces a fast-paced stock-footage explainer with a synthetic voice, not a Veo-style
+AI-generated video (Veo has no free API tier at all).
 
 ## 1. Install prerequisites (all free)
 
@@ -22,6 +28,11 @@ fast-paced stock-footage explainer with a synthetic voice, not a Veo-style AI-ge
 - **Gemini**: create a key at https://aistudio.google.com/apikey — Flash models are free
   within rate limits (your content may be used to improve Google's products on the free tier).
 - **Pexels**: free key at https://www.pexels.com/api/ — generous rate limits, no cost.
+- **Freesound** (optional, for background music): free key at
+  https://freesound.org/apiv2/apply/ — create an account, then apply for an API credential.
+  Only CC0 (public domain) tracks are searched, so no attribution is required. Leave
+  `FREESOUND_API_KEY` blank to skip background music; the video still generates normally with
+  voice-only audio.
 
 ## 3. Posting to TikTok (manual)
 
@@ -57,7 +68,42 @@ npm run run:once
 
 Check `./data/jobs.json` after any run for status and logs. Generated clips, audio, and the
 final video for each run are kept under `./workdir/<job-id>/` — the UI serves the final video
-from there for preview/download; the folder is safe to delete once you've uploaded manually.
+from there for preview/download.
+
+## 6. Automated scheduled generation (Sri Lanka time)
+
+Set `SCHEDULE_TIMES` in `.env` to a comma-separated list of 24h times, e.g.:
+
+```
+SCHEDULE_TIMES=09:00,18:00
+```
+
+The app will automatically start a full generation run at each of those times, every day,
+**in Sri Lanka local time (Asia/Colombo, UTC+5:30)** — this timezone is fixed and does not
+depend on the host server's own timezone. Scheduled runs use the exact same pipeline as a
+manual "Generate Now" click and post their result to the same history/dashboard, just tagged
+with trigger `scheduled` instead of `manual`. Manual generation from the UI keeps working at
+any time regardless of the schedule.
+
+Leave `SCHEDULE_TIMES` blank to disable automated generation entirely; the UI will show "No
+automated schedule configured" and manual generation still works normally.
+
+All job log lines (both manual and scheduled) are timestamped in Sri Lanka time.
+
+## 7. Storage retention (FIFO, 100-video cap)
+
+`MAX_STORED_VIDEOS` (default `100`) caps how many generated videos are kept on disk at once.
+After every successful run (manual or scheduled), if the count exceeds the cap, the **oldest**
+video's file and database record are deleted automatically — first in, first out. Lower this
+value if you're on a small disk, or raise it if you have more storage to spare.
+
+## 8. Video history & management
+
+The UI's **Video history** section lists every generated video, newest first, with its status,
+trigger (manual/scheduled), and Sri Lanka-time timestamp. Click a row to expand it and see the
+full script, title, hashtags, an inline HTML5 video player, a **Download** button, and a
+**Delete** button (removes both the video file and its database record). Videos are never
+auto-downloaded — a download only happens when you explicitly click the button.
 
 ## Customizing content
 
@@ -71,7 +117,12 @@ Edit `NICHES` in `src/pipeline/runPipeline.ts` to control what topics get genera
   tiers, not free).
 - **Captions are timed by even word-count spreading**, not real speech alignment — good enough
   for burned-in captions, not perfectly synced to Piper's actual cadence.
-- **No retry/backoff** on transient API failures — add if you see occasional Gemini/Pexels
-  rate-limit errors during busier hours.
-- **Generated videos are ephemeral** — download each one from the UI soon after it's created;
-  see the note in `DEPLOY_RENDER.md` if hosting this remotely.
+- **Background music selection is mood-based text search**, not audio analysis — Freesound
+  results for a given mood can vary in quality; if a track sounds off, delete the video and
+  regenerate to get a fresh pick.
+- **Storage retention caps video *count*, not disk usage** — if you need a hard disk-space
+  limit instead, lower `MAX_STORED_VIDEOS` or add a size-based check in
+  `src/services/storage.service.ts`.
+- **If hosting on a platform with an ephemeral filesystem** (e.g. most free tiers), everything
+  under `WORKDIR` and `JOB_DB_PATH` — including history — is wiped on redeploy/restart. Use a
+  persistent disk/volume if you need videos and history to survive deploys.

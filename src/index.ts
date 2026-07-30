@@ -1,4 +1,4 @@
 import { startServer } from "./server";
 
-console.log("Reelforge starting (on-demand generation only)...");
+console.log("Reelforge starting (manual + scheduled generation)...");
 startServer();
